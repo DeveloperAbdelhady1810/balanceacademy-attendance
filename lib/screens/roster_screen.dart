@@ -191,6 +191,26 @@ class _RosterScreenState extends State<RosterScreen> {
               ? Center(child: Text(attendance.error!))
               : Column(
                   children: [
+                    if (attendance.isOffline)
+                      Container(
+                        width: double.infinity,
+                        color: Colors.red.shade50,
+                        padding: const EdgeInsets.all(10),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.wifi_off_rounded, size: 16, color: Colors.red.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Offline - showing your last saved progress. Marks are still being saved; Submit needs a connection.',
+                                style: TextStyle(color: Colors.red.shade700, fontSize: 12.5, fontWeight: FontWeight.w600),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     if (attendance.sessionStatus == 'submitted')
                       Container(
                         width: double.infinity,
@@ -235,7 +255,10 @@ class _RosterScreenState extends State<RosterScreen> {
                                 return StudentTile(
                                   student: student,
                                   quizMaxMark: quizMaxMark,
-                                  onChanged: () => setState(() {}),
+                                  onChanged: () {
+                                    attendance.persistCurrent(student);
+                                    setState(() {});
+                                  },
                                 );
                               },
                             ),

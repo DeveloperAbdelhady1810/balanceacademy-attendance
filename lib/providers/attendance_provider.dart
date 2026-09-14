@@ -4,6 +4,7 @@ import '../models/course.dart';
 import '../models/roster_student.dart';
 import '../services/api_client.dart';
 import '../services/api_exception.dart';
+import '../services/local_db.dart';
 
 class AttendanceProvider extends ChangeNotifier {
   final ApiClient _api = ApiClient();
@@ -21,9 +22,15 @@ class AttendanceProvider extends ChangeNotifier {
   List<RosterStudent> roster = [];
   int? sessionId;
   String? sessionStatus;
+  String? _rosterDate;
 
   bool isLoading = false;
   String? error;
+
+  /// True when the current roster came from the local checkpoint (the
+  /// online fetch failed) rather than a fresh server response - the UI
+  /// shows an offline banner off this, matching the sibling desktop app.
+  bool isOffline = false;
 
   void _setLoading(bool value) {
     isLoading = value;
@@ -93,25 +100,51 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     selectedCourse = course;
+    _rosterDate = DateTime.now().toIso8601String().split('T').first;
+    final centerId = selectedCenter!.id;
+
     try {
-      final today = DateTime.now().toIso8601String().split('T').first;
       final result = await _api.get(
         '/assistant/courses/${course.id}/roster',
         token: token,
-        query: {'center_id': selectedCenter!.id.toString(), 'date': today},
+        query: {'center_id': centerId.toString(), 'date': _rosterDate!},
       );
       roster = (result['students'] as List)
           .map((s) => RosterStudent.fromJson(s as Map<String, dynamic>))
           .toList();
       sessionId = result['session_id'] as int?;
       sessionStatus = result['session_status'] as String?;
+      isOffline = false;
+      await LocalDb.saveRoster(course.id, centerId, _rosterDate!, roster);
       _setLoading(false);
       return true;
     } catch (e) {
+      // Online fetch failed - fall back to whatever was last checkpointed
+      // locally for this exact course/center/date, so a dropped connection
+      // doesn't block the assistant from continuing where they left off.
+      final local = await LocalDb.loadRoster(course.id, centerId, _rosterDate!);
+      if (local != null) {
+        roster = local;
+        sessionId = null;
+        sessionStatus = null;
+        isOffline = true;
+        error = null;
+        _setLoading(false);
+        return true;
+      }
       error = e is ApiException ? e.message : 'Could not load the roster.';
       _setLoading(false);
       return false;
     }
+  }
+
+  /// Persists one student's mark (or a newly-added walk-in) to the local
+  /// checkpoint - call this any time a StudentTile mutates present/absent,
+  /// homework, or quiz mark, in addition to the setState()/notifyListeners()
+  /// that already redraws the UI.
+  void persistCurrent(RosterStudent s) {
+    if (selectedCourse == null || selectedCenter == null || _rosterDate == null) return;
+    LocalDb.updateRecord(selectedCourse!.id, selectedCenter!.id, _rosterDate!, s);
   }
 
   /// Marks a student present by matching a scanned QR code's student number
@@ -123,6 +156,7 @@ class AttendanceProvider extends ChangeNotifier {
     final match = roster.where((s) => s.studentNumber == studentNumber).firstOrNull;
     if (match != null) {
       match.status = 'present';
+      persistCurrent(match);
       notifyListeners();
     }
     return match;
@@ -145,11 +179,15 @@ class AttendanceProvider extends ChangeNotifier {
   /// not already on it, marking them present either way.
   void addOrMarkPresent(RosterStudent student) {
     final existingIndex = roster.indexWhere((s) => s.id == student.id);
+    final RosterStudent persisted;
     if (existingIndex >= 0) {
       roster[existingIndex].status = 'present';
+      persisted = roster[existingIndex];
     } else {
       roster.add(student);
+      persisted = student;
     }
+    persistCurrent(persisted);
     notifyListeners();
   }
 
@@ -175,16 +213,17 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     try {
-      final today = DateTime.now().toIso8601String().split('T').first;
+      final date = _rosterDate ?? DateTime.now().toIso8601String().split('T').first;
       final result = await _api.post(
         '/assistant/courses/${selectedCourse!.id}/submit',
         token: token,
         body: {
           'center_id': selectedCenter!.id,
-          'date': today,
+          'date': date,
           'records': roster.map((s) => s.toRecordJson()).toList(),
         },
       );
+      await LocalDb.clearSession(selectedCourse!.id, selectedCenter!.id, date);
       _setLoading(false);
       return result as Map<String, dynamic>;
     } catch (e) {
@@ -206,6 +245,8 @@ class AttendanceProvider extends ChangeNotifier {
     selectedCourse = null;
     sessionId = null;
     sessionStatus = null;
+    _rosterDate = null;
+    isOffline = false;
     notifyListeners();
   }
 }
