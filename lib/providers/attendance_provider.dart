@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../models/center.dart';
 import '../models/course.dart';
 import '../models/roster_student.dart';
+import '../models/search_field.dart';
 import '../services/api_client.dart';
 import '../services/api_exception.dart';
 import '../services/local_db.dart';
@@ -78,11 +79,16 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     try {
-      final result = await _api.get('/assistant/courses', token: token, query: {
-        if (selectedStage != null) 'stage': selectedStage!,
-        if (selectedGrade != null) 'grade': selectedGrade!,
-        if (selectedCenter != null) 'center_id': selectedCenter!.id.toString(),
-      });
+      final result = await _api.get(
+        '/assistant/courses',
+        token: token,
+        query: {
+          if (selectedStage != null) 'stage': selectedStage!,
+          if (selectedGrade != null) 'grade': selectedGrade!,
+          if (selectedCenter != null)
+            'center_id': selectedCenter!.id.toString(),
+        },
+      );
       courses = (result['courses'] as List)
           .map((c) => AttendanceCourse.fromJson(c as Map<String, dynamic>))
           .toList();
@@ -143,8 +149,14 @@ class AttendanceProvider extends ChangeNotifier {
   /// homework, or quiz mark, in addition to the setState()/notifyListeners()
   /// that already redraws the UI.
   void persistCurrent(RosterStudent s) {
-    if (selectedCourse == null || selectedCenter == null || _rosterDate == null) return;
-    LocalDb.updateRecord(selectedCourse!.id, selectedCenter!.id, _rosterDate!, s);
+    if (selectedCourse == null || selectedCenter == null || _rosterDate == null)
+      return;
+    LocalDb.updateRecord(
+      selectedCourse!.id,
+      selectedCenter!.id,
+      _rosterDate!,
+      s,
+    );
   }
 
   /// Marks a student present by matching a scanned QR code's student number
@@ -153,7 +165,9 @@ class AttendanceProvider extends ChangeNotifier {
   /// Returns the matched student, or null if nobody in the roster matches
   /// (the app then falls back to a manual server-side search).
   RosterStudent? markPresentByStudentNumber(int studentNumber) {
-    final match = roster.where((s) => s.studentNumber == studentNumber).firstOrNull;
+    final match = roster
+        .where((s) => s.studentNumber == studentNumber)
+        .firstOrNull;
     if (match != null) {
       match.status = 'present';
       persistCurrent(match);
@@ -162,10 +176,18 @@ class AttendanceProvider extends ChangeNotifier {
     return match;
   }
 
-  Future<List<RosterStudent>> searchStudents(String token, String query) async {
-    if (query.trim().length < 2) return [];
+  Future<List<RosterStudent>> searchStudents(
+    String token,
+    String query, {
+    SearchField field = SearchField.all,
+  }) async {
+    if (query.trim().length < field.minLength) return [];
     try {
-      final result = await _api.get('/assistant/students/search', token: token, query: {'q': query});
+      final result = await _api.get(
+        '/assistant/students/search',
+        token: token,
+        query: {'q': query.trim(), 'field': field.apiValue},
+      );
       return (result['students'] as List)
           .map((s) => RosterStudent.fromSearchJson(s as Map<String, dynamic>))
           .toList();
@@ -202,7 +224,9 @@ class AttendanceProvider extends ChangeNotifier {
       selectedCourse!.quizMaxMark = maxMark;
       return true;
     } catch (e) {
-      error = e is ApiException ? e.message : 'Could not update the quiz scale.';
+      error = e is ApiException
+          ? e.message
+          : 'Could not update the quiz scale.';
       notifyListeners();
       return false;
     }
@@ -213,7 +237,8 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     try {
-      final date = _rosterDate ?? DateTime.now().toIso8601String().split('T').first;
+      final date =
+          _rosterDate ?? DateTime.now().toIso8601String().split('T').first;
       final result = await _api.post(
         '/assistant/courses/${selectedCourse!.id}/submit',
         token: token,

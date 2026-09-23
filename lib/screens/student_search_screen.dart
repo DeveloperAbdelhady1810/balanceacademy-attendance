@@ -1,7 +1,8 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/roster_student.dart';
+import '../models/search_field.dart';
+import '../widgets/search_field_dropdown.dart';
 import '../providers/attendance_provider.dart';
 import '../providers/auth_provider.dart';
 
@@ -20,44 +21,45 @@ class StudentSearchScreen extends StatefulWidget {
 
 class _StudentSearchScreenState extends State<StudentSearchScreen> {
   final _controller = TextEditingController();
-  Timer? _debounce;
+  SearchField _field = SearchField.all;
+  bool _searched = false;
   List<RosterStudent> _results = [];
   bool _searching = false;
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
-  void _onChanged(String value) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () => _search(value));
-  }
-
   Future<void> _search(String query) async {
     final token = context.read<AuthProvider>().token;
-    if (token == null || query.trim().length < 2) {
-      setState(() => _results = []);
+    if (token == null || query.trim().length < _field.minLength) {
+      setState(() {
+        _results = [];
+        _searched = false;
+      });
       return;
     }
 
     setState(() => _searching = true);
-    final results = await context.read<AttendanceProvider>().searchStudents(token, query);
+    final results = await context.read<AttendanceProvider>().searchStudents(
+      token,
+      query,
+      field: _field,
+    );
     if (!mounted) return;
     setState(() {
       _results = results;
       _searching = false;
+      _searched = true;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Find a Student'),
-      ),
+      appBar: AppBar(title: const Text('Find a Student')),
       body: Column(
         children: [
           Padding(
@@ -65,11 +67,21 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
             child: TextField(
               controller: _controller,
               autofocus: true,
-              onChanged: _onChanged,
-              decoration: const InputDecoration(
-                labelText: 'Name, phone, email, or student number',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
+              textInputAction: TextInputAction.search,
+              onSubmitted: _search,
+              decoration: InputDecoration(
+                labelText:
+                    'Search by ${_field.label.toLowerCase()} - press Enter',
+                prefixIcon: const Icon(Icons.search),
+                border: const OutlineInputBorder(),
+                suffixIcon: SearchFieldDropdown(
+                  value: _field,
+                  onChanged: (f) {
+                    setState(() => _field = f);
+                    if (_controller.text.trim().isNotEmpty)
+                      _search(_controller.text);
+                  },
+                ),
               ),
             ),
           ),
@@ -78,9 +90,9 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
             child: _results.isEmpty
                 ? Center(
                     child: Text(
-                      _controller.text.trim().length < 2
-                          ? 'Type at least 2 characters to search.'
-                          : 'No students found.',
+                      _searched
+                          ? 'No students found.'
+                          : 'Pick what to search by, type, then press Enter.',
                       style: TextStyle(color: Colors.grey.shade600),
                     ),
                   )
@@ -91,10 +103,13 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                       return ListTile(
                         leading: const CircleAvatar(child: Icon(Icons.person)),
                         title: Text(student.name),
-                        subtitle: Text([
-                          if (student.studentNumber != null) '#${student.studentNumber}',
-                          if (student.phone != null) student.phone!,
-                        ].join(' · ')),
+                        subtitle: Text(
+                          [
+                            if (student.studentNumber != null)
+                              '#${student.studentNumber}',
+                            if (student.phone != null) student.phone!,
+                          ].join(' · '),
+                        ),
                         onTap: () => Navigator.of(context).pop(student),
                       );
                     },
