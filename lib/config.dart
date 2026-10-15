@@ -12,3 +12,8 @@ const String apiBaseUrl = 'https://balance-academy.com/api';
 /// prefix, so padding doesn't matter either way - only the prefix itself
 /// needs to match per-platform.
 const String qrCodePrefix = 'MK-';
+
+/// Rotating QR shown by the Balance Academy student app:
+/// `MSQ1:{student_no}:{counter}:{mac as 18 hex}`. It can only be verified by the
+/// server (the secret never leaves the student's phone), via /assistant/attendance/bulk.
+const String rotatingQrPrefix = 'MSQ1:';

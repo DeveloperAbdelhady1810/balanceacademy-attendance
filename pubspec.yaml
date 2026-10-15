@@ -43,6 +43,8 @@ dependencies:
   sqflite: ^2.4.2
   path_provider: ^2.1.5
   path: ^1.9.1
+  flutter_blue_plus: ^2.3.14
+  flutter_ble_peripheral: ^3.1.0
 
 dev_dependencies:
   flutter_test:
@@ -97,3 +99,12 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# Same launcher icon as the Mostafa Solaiman student app (white background, face).
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon_fg.png"

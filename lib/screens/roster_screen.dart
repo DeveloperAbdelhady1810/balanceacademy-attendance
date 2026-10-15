@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../config.dart';
 import '../models/course.dart';
 import '../models/search_field.dart';
 import '../widgets/search_field_dropdown.dart';
@@ -8,6 +7,7 @@ import '../providers/attendance_provider.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/student_tile.dart';
 import 'qr_scan_screen.dart';
+import 'radar_screen.dart';
 import 'student_search_screen.dart';
 import 'summary_screen.dart';
 
@@ -47,60 +47,45 @@ class _RosterScreenState extends State<RosterScreen> {
   Future<void> _load() async {
     final token = _token;
     if (token == null) return;
-    await context.read<AttendanceProvider>().loadRoster(token, widget.course);
+    final attendance = context.read<AttendanceProvider>();
+    await attendance.loadRoster(token, widget.course);
+    await attendance.loadFeatures(token);
   }
 
+  /// Opens the camera and keeps it open: every code goes to the provider, which
+  /// verifies rotating codes with the server and still accepts the old static ID codes.
   Future<void> _scanQr() async {
-    final scanned = await Navigator.of(
-      context,
-    ).push<String>(MaterialPageRoute(builder: (_) => const QrScanScreen()));
-    if (scanned == null || !mounted) return;
-
-    if (!scanned.startsWith(qrCodePrefix)) {
-      _showSnack(
-        'That code is not a recognized student QR code.',
-        isError: true,
-      );
-      return;
-    }
-
-    final numberPart = scanned.substring(qrCodePrefix.length);
-    final studentNumber = int.tryParse(numberPart);
-    if (studentNumber == null) {
-      _showSnack(
-        'That code is not a recognized student QR code.',
-        isError: true,
-      );
-      return;
-    }
-
+    final token = _token;
+    if (token == null) return;
     final attendance = context.read<AttendanceProvider>();
-    final match = attendance.markPresentByStudentNumber(studentNumber);
-    if (match != null) {
-      _showSnack('${match.name} marked present.');
-    } else {
-      // Not on this course's expected roster (wrong grade/center, or a
-      // walk-in never assigned a center) - fall back to a real search so
-      // the assistant can still add them.
-      _showSnack('Student #$studentNumber isn\'t on this roster - searching…');
-      final token = _token;
-      if (token != null) {
-        final results = await attendance.searchStudents(
-          token,
-          studentNumber.toString(),
-          field: SearchField.studentId,
-        );
-        final found = results
-            .where((s) => s.studentNumber == studentNumber)
-            .firstOrNull;
-        if (found != null) {
-          attendance.addOrMarkPresent(found);
-          _showSnack('${found.name} added and marked present.');
-        } else {
-          _showSnack('No student found with that QR code.', isError: true);
-        }
-      }
+
+    final marked = await Navigator.of(context).push<int>(
+      MaterialPageRoute(
+        builder: (_) => QrScanScreen(
+          onCode: (raw) => attendance.handleScan(token, raw),
+          secureCodesEnabled: attendance.bleEnabled,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (marked != null && marked > 0) {
+      _showSnack('$marked student${marked == 1 ? '' : 's'} marked present.');
     }
+  }
+
+  Future<void> _openRadar() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RadarScreen()));
+    if (!mounted) return;
+    setState(() {}); // the radar may have marked students present
+  }
+
+  Future<void> _retryPending() async {
+    final token = _token;
+    if (token == null) return;
+    final attendance = context.read<AttendanceProvider>();
+    final ok = await attendance.flushPending(token);
+    if (!mounted) return;
+    _showSnack(ok ? 'All scans verified.' : 'Still offline - scans will be verified later.', isError: !ok);
   }
 
   Future<void> _addWalkIn() async {
@@ -197,6 +182,8 @@ class _RosterScreenState extends State<RosterScreen> {
       ).push(MaterialPageRoute(builder: (_) => SummaryScreen(result: result)));
     } else if (attendance.error != null) {
       _showSnack(attendance.error!, isError: true);
+      // Keep the roster on screen so the assistant can fix the problem and submit again.
+      attendance.clearError();
     }
   }
 
@@ -278,6 +265,25 @@ class _RosterScreenState extends State<RosterScreen> {
                       textAlign: TextAlign.center,
                     ),
                   ),
+                if (attendance.pendingScans.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    color: Colors.amber.shade50,
+                    padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.schedule_rounded, size: 18, color: Colors.amber.shade900),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${attendance.pendingScans.length} scan(s) waiting to be verified',
+                            style: TextStyle(color: Colors.amber.shade900, fontSize: 13),
+                          ),
+                        ),
+                        TextButton(onPressed: _retryPending, child: const Text('Retry')),
+                      ],
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(
@@ -300,6 +306,19 @@ class _RosterScreenState extends State<RosterScreen> {
                     ],
                   ),
                 ),
+                if (attendance.bleEnabled)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.tonalIcon(
+                        key: const Key('open_radar'),
+                        onPressed: _openRadar,
+                        icon: const Icon(Icons.radar_rounded),
+                        label: const Text('Classroom Radar (Bluetooth)'),
+                      ),
+                    ),
+                  ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   child: TextField(
@@ -356,6 +375,7 @@ class _RosterScreenState extends State<RosterScreen> {
                             return StudentTile(
                               student: student,
                               quizMaxMark: quizMaxMark,
+                              unverified: attendance.unverifiedStudentIds.contains(student.id),
                               onChanged: () {
                                 attendance.persistCurrent(student);
                                 setState(() {});
