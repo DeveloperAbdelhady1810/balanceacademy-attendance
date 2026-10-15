@@ -21,7 +21,10 @@ class StudentSearchScreen extends StatefulWidget {
 
 class _StudentSearchScreenState extends State<StudentSearchScreen> {
   final _controller = TextEditingController();
-  SearchField _field = SearchField.all;
+  /// The scope the assistant last picked stays for the next walk-in students
+  /// (until they change it again) - for as long as the app is open.
+  static SearchField _lastField = SearchField.all;
+  SearchField _field = _lastField;
   bool _searched = false;
   List<RosterStudent> _results = [];
   bool _searching = false;
@@ -77,7 +80,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
                 suffixIcon: SearchFieldDropdown(
                   value: _field,
                   onChanged: (f) {
-                    setState(() => _field = f);
+                    setState(() => _field = _lastField = f);
                     if (_controller.text.trim().isNotEmpty)
                       _search(_controller.text);
                   },

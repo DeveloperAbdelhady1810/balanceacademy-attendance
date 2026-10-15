@@ -327,7 +327,7 @@ class _Empty extends StatelessWidget {
           Text(
             hidden > 0
                 ? '$hidden student${hidden == 1 ? ' is' : 's are'} outside the range. Move the slider towards "Wide" to include them.'
-                : 'Ask students to open the Mostafa Solaiman app. Their phones broadcast automatically.',
+                : 'Ask students to open the Balance Academy app. Their phones broadcast automatically.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey.shade700, height: 1.45),
           ),
