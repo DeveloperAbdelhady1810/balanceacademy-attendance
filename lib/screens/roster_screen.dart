@@ -14,7 +14,10 @@ import 'summary_screen.dart';
 class RosterScreen extends StatefulWidget {
   final AttendanceCourse course;
 
-  const RosterScreen({super.key, required this.course});
+  /// Set when the app reopens an unsubmitted session from an earlier day.
+  final String? resumeDate;
+
+  const RosterScreen({super.key, required this.course, this.resumeDate});
 
   @override
   State<RosterScreen> createState() => _RosterScreenState();
@@ -48,7 +51,7 @@ class _RosterScreenState extends State<RosterScreen> {
     final token = _token;
     if (token == null) return;
     final attendance = context.read<AttendanceProvider>();
-    await attendance.loadRoster(token, widget.course);
+    await attendance.loadRoster(token, widget.course, resumeDate: widget.resumeDate);
     await attendance.loadFeatures(token);
   }
 
@@ -206,7 +209,13 @@ class _RosterScreenState extends State<RosterScreen> {
               .where((s) => _searchField.matches(s, _appliedQuery))
               .toList();
 
-    return Scaffold(
+    // Leaving the roster on purpose closes the session; killing the app does not,
+    // so the next launch reopens it.
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) attendance.clearSavedSession();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(widget.course.title),
         actions: [
@@ -410,6 +419,7 @@ class _RosterScreenState extends State<RosterScreen> {
                 ),
               ],
             ),
+    ),
     );
   }
 }

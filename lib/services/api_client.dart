@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show HttpDate;
 import 'package:http/http.dart' as http;
@@ -12,6 +13,12 @@ class ApiClient {
   ApiClient({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
+
+  /// A connection that hangs counts as offline: the app then falls back to what it saved on the phone.
+  static const _timeout = Duration(seconds: 8);
+
+  /// Writes (submit, bulk verify) carry more data, so they get longer.
+  static const _writeTimeout = Duration(seconds: 30);
 
   /// server clock - this phone's clock, in seconds, learnt from the HTTP `Date`
   /// header of every response. Rotating student codes are checked against the
@@ -60,7 +67,7 @@ class ApiClient {
   }
 
   Future<dynamic> get(String path, {String? token, Map<String, String>? query}) async {
-    final response = await _client.get(_uri(path, query), headers: _headers(token));
+    final response = await _client.get(_uri(path, query), headers: _headers(token)).timeout(_timeout);
     return _decode(response);
   }
 
@@ -69,7 +76,7 @@ class ApiClient {
       _uri(path),
       headers: _headers(token),
       body: body != null ? jsonEncode(body) : null,
-    );
+    ).timeout(_writeTimeout);
     return _decode(response);
   }
 
@@ -78,7 +85,7 @@ class ApiClient {
       _uri(path),
       headers: _headers(token),
       body: body != null ? jsonEncode(body) : null,
-    );
+    ).timeout(_writeTimeout);
     return _decode(response);
   }
 }

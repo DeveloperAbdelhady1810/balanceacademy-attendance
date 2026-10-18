@@ -31,6 +31,17 @@ class AttendanceCourse {
       expectedCount: (json['expected_count'] as int?) ?? 0,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'stage': stage,
+        'grade': grade,
+        'division': division,
+        'subject': subject,
+        'quiz_max_mark': quizMaxMark,
+        'expected_count': expectedCount,
+      };
 }
 
 class FilterOption {

@@ -36,6 +36,9 @@ class AttendanceProvider extends ChangeNotifier {
   bool isLoading = false;
   String? error;
 
+  /// Why the last walk-in search found nothing (offline and no downloaded list, server refused...).
+  String? searchError;
+
   /// True when the current roster came from the local checkpoint (the
   /// online fetch failed) rather than a fresh server response - the UI
   /// shows an offline banner off this, matching the sibling desktop app.
@@ -76,14 +79,22 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     try {
-      final result = await _api.get('/assistant/centers', token: token);
+      Map<String, dynamic> result;
+      try {
+        result = Map<String, dynamic>.from(await _api.get('/assistant/centers', token: token) as Map);
+        await _saveCache('centers', result);
+      } on ApiException {
+        rethrow;
+      } catch (_) {
+        result = await _loadCache('centers') ?? (throw const _NoCache());
+      }
       centers = (result['centers'] as List)
           .map((c) => AttendanceCenter.fromJson(c as Map<String, dynamic>))
           .toList();
       _setLoading(false);
       return true;
     } catch (e) {
-      error = e is ApiException ? e.message : 'Could not load centers.';
+      error = e is ApiException ? e.message : 'No connection, and the centers were never loaded on this phone yet.';
       _setLoading(false);
       return false;
     }
@@ -93,7 +104,15 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     try {
-      final result = await _api.get('/assistant/filters', token: token);
+      Map<String, dynamic> result;
+      try {
+        result = Map<String, dynamic>.from(await _api.get('/assistant/filters', token: token) as Map);
+        await _saveCache('filters', result);
+      } on ApiException {
+        rethrow;
+      } catch (_) {
+        result = await _loadCache('filters') ?? (throw const _NoCache());
+      }
       stages = (result['stages'] as List)
           .map((s) => FilterOption.fromJson(s as Map<String, dynamic>))
           .toList();
@@ -103,7 +122,7 @@ class AttendanceProvider extends ChangeNotifier {
       _setLoading(false);
       return true;
     } catch (e) {
-      error = e is ApiException ? e.message : 'Could not load filters.';
+      error = e is ApiException ? e.message : 'No connection, and the filters were never loaded on this phone yet.';
       _setLoading(false);
       return false;
     }
@@ -113,35 +132,58 @@ class AttendanceProvider extends ChangeNotifier {
     _setLoading(true);
     error = null;
     try {
-      final result = await _api.get(
-        '/assistant/courses',
-        token: token,
-        query: {
-          if (selectedStage != null) 'stage': selectedStage!,
-          if (selectedGrade != null) 'grade': selectedGrade!,
-          if (selectedCenter != null)
-            'center_id': selectedCenter!.id.toString(),
-        },
-      );
+      final query = {
+        if (selectedStage != null) 'stage': selectedStage!,
+        if (selectedGrade != null) 'grade': selectedGrade!,
+        if (selectedCenter != null) 'center_id': selectedCenter!.id.toString(),
+      };
+      final cacheKey = 'courses_${selectedCenter?.id}_${selectedStage ?? ''}_${selectedGrade ?? ''}';
+      Map<String, dynamic> result;
+      try {
+        result = Map<String, dynamic>.from(await _api.get('/assistant/courses', token: token, query: query) as Map);
+        await _saveCache(cacheKey, result);
+      } on ApiException {
+        rethrow;
+      } catch (_) {
+        result = await _loadCache(cacheKey) ?? (throw const _NoCache());
+      }
       courses = (result['courses'] as List)
           .map((c) => AttendanceCourse.fromJson(c as Map<String, dynamic>))
           .toList();
       _setLoading(false);
       return true;
     } catch (e) {
-      error = e is ApiException ? e.message : 'Could not load courses.';
+      error = e is ApiException ? e.message : 'No connection, and these courses were never loaded on this phone yet.';
       _setLoading(false);
       return false;
     }
   }
 
-  Future<bool> loadRoster(String token, AttendanceCourse course) async {
+  /// [resumeDate]: reopen a session started on an earlier day that was never submitted.
+  Future<bool> loadRoster(String token, AttendanceCourse course, {String? resumeDate}) async {
     if (selectedCenter == null) return false;
-    _setLoading(true);
     error = null;
     selectedCourse = course;
-    _rosterDate = _today();
+    _rosterDate = resumeDate ?? _today();
     final centerId = selectedCenter!.id;
+
+    // Reopening a session after the app was closed: show what the phone holds right away
+    // (no waiting on the network), then refresh behind it.
+    final saved = resumeDate == null ? null : await LocalDb.loadRoster(course.id, centerId, _rosterDate!);
+    if (saved != null) {
+      roster = saved;
+      sessionId = null;
+      sessionStatus = null;
+      isOffline = true;
+      _verifiedStudentNos.clear();
+      unverifiedStudentIds.clear();
+      await _ensurePendingLoaded();
+      _restorePendingOntoRoster();
+      isLoading = false;
+      notifyListeners();
+    } else {
+      _setLoading(true);
+    }
 
     try {
       final result = await _api.get(
@@ -149,13 +191,18 @@ class AttendanceProvider extends ChangeNotifier {
         token: token,
         query: {'center_id': centerId.toString(), 'date': _rosterDate!},
       );
-      roster = (result['students'] as List)
+      final fresh = (result['students'] as List)
           .map((s) => RosterStudent.fromJson(s as Map<String, dynamic>))
           .toList();
+      // Work already marked on this phone for this session and not submitted yet
+      // (marks, walk-ins) must survive reopening it online - it wins over the server's copy.
+      roster = _mergeWithLocal(fresh, await LocalDb.loadRoster(course.id, centerId, _rosterDate!));
       sessionId = result['session_id'] as int?;
       sessionStatus = result['session_status'] as String?;
       isOffline = false;
       await LocalDb.saveRoster(course.id, centerId, _rosterDate!, roster);
+      await _saveSession();
+      unawaited(refreshDirectory(token));
       _verifiedStudentNos.clear();
       unverifiedStudentIds.clear();
       await _ensurePendingLoaded();
@@ -169,6 +216,7 @@ class AttendanceProvider extends ChangeNotifier {
       final local = await LocalDb.loadRoster(course.id, centerId, _rosterDate!);
       if (local != null) {
         roster = local;
+        await _saveSession();
         sessionId = null;
         sessionStatus = null;
         isOffline = true;
@@ -241,6 +289,7 @@ class AttendanceProvider extends ChangeNotifier {
     SearchField field = SearchField.all,
   }) async {
     if (query.trim().length < field.minLength) return [];
+    searchError = null;
     try {
       final result = await _api.get(
         '/assistant/students/search',
@@ -250,9 +299,34 @@ class AttendanceProvider extends ChangeNotifier {
       return (result['students'] as List)
           .map((s) => RosterStudent.fromSearchJson(s as Map<String, dynamic>))
           .toList();
-    } catch (e) {
-      error = e is ApiException ? e.message : 'Search failed.';
+    } on ApiException catch (e) {
+      searchError = e.message;
       return [];
+    } catch (_) {
+      // No connection: search the student list downloaded earlier on this phone.
+      if (await LocalDb.directorySize() == 0) {
+        searchError = 'No connection, and the student list has not been downloaded yet - open a session once while online.';
+        return [];
+      }
+      return LocalDb.searchDirectory(query.trim(), field);
+    }
+  }
+
+  /// Downloads every student (name, ID, phones) so the walk-in search works offline.
+  /// Quiet and best-effort: skipped when the copy on the phone is under 12 hours old.
+  Future<void> refreshDirectory(String token, {bool force = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final last = DateTime.tryParse(prefs.getString(_directoryAtKey) ?? '');
+      if (!force && last != null && DateTime.now().difference(last).inHours < 12 && await LocalDb.directorySize() > 0) return;
+      final result = await _api.get('/assistant/students/directory', token: token);
+      final students = (result['students'] as List)
+          .map((s) => RosterStudent.fromSearchJson(s as Map<String, dynamic>))
+          .toList();
+      await LocalDb.saveDirectory(students);
+      await prefs.setString(_directoryAtKey, DateTime.now().toIso8601String());
+    } catch (_) {
+      // offline or an older server: keep whatever list is already on the phone
     }
   }
 
@@ -333,7 +407,7 @@ class AttendanceProvider extends ChangeNotifier {
     final scan = PendingScan(
       courseId: course.id,
       centerId: center.id,
-      date: _today(),
+      date: _sessionDate(),
       studentNo: code.studentNo,
       mac: code.mac,
       detectedAt: ApiClient.serverNow(),
@@ -389,7 +463,7 @@ class AttendanceProvider extends ChangeNotifier {
       scans.add(PendingScan(
         courseId: course.id,
         centerId: center.id,
-        date: _today(),
+        date: _sessionDate(),
         studentNo: d.studentNo,
         mac: d.macHex,
         detectedAt: d.detectedAt,
@@ -520,7 +594,7 @@ class AttendanceProvider extends ChangeNotifier {
   }
 
   bool _isCurrentRoster(PendingScan s) =>
-      s.courseId == selectedCourse?.id && s.centerId == selectedCenter?.id && s.date == _today();
+      s.courseId == selectedCourse?.id && s.centerId == selectedCenter?.id && s.date == _sessionDate();
 
   void _markVerified(int studentId, int studentNo, String name) {
     _verifiedStudentNos.add(studentNo);
@@ -617,6 +691,85 @@ class AttendanceProvider extends ChangeNotifier {
 
   String _today() => DateTime.now().toIso8601String().split('T').first;
 
+  /// The date of the session being worked on (today's, or an unsubmitted earlier day that was resumed).
+  String _sessionDate() => _rosterDate ?? _today();
+
+  /// Server roster + what this phone already holds for the same session: the phone's marks and
+  /// walk-ins are kept, students new on the server are added.
+  List<RosterStudent> _mergeWithLocal(List<RosterStudent> fresh, List<RosterStudent>? local) {
+    if (local == null || local.isEmpty) return fresh;
+    final localById = {for (final s in local) s.id: s};
+    return [
+      for (final s in fresh) localById.remove(s.id) ?? s,
+      ...localById.values.where((s) => s.isWalkIn), // walk-ins are not on the server's list
+    ];
+  }
+
+  // ── what this phone remembers so it keeps working offline / after a restart ──
+
+  static const _directoryAtKey = 'directory_downloaded_at';
+  static const _sessionKey = 'open_session';
+
+  Future<void> _saveCache(String key, Map<String, dynamic> value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('cache_$key', jsonEncode(value));
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>?> _loadCache(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('cache_$key');
+      return raw == null ? null : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Remembers which session is open, so reopening the app after it was closed lands back in it.
+  Future<void> _saveSession() async {
+    final center = selectedCenter;
+    final course = selectedCourse;
+    if (center == null || course == null || _rosterDate == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_sessionKey, jsonEncode({
+        'center': center.toJson(),
+        'course': course.toJson(),
+        'stage': selectedStage,
+        'grade': selectedGrade,
+        'date': _rosterDate,
+      }));
+    } catch (_) {}
+  }
+
+  Future<void> clearSavedSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_sessionKey);
+    } catch (_) {}
+  }
+
+  /// Puts the center/course selection back from the saved session and returns it
+  /// (null when there is none). The caller then opens the roster screen.
+  Future<({AttendanceCourse course, String date})?> restoreSavedSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_sessionKey);
+      if (raw == null) return null;
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      selectedCenter = AttendanceCenter.fromJson(m['center'] as Map<String, dynamic>);
+      selectedStage = m['stage'] as String?;
+      selectedGrade = m['grade'] as String?;
+      final course = AttendanceCourse.fromJson(m['course'] as Map<String, dynamic>);
+      notifyListeners();
+      return (course: course, date: m['date'] as String);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ───────────────────────────── quiz / submit ────────────────────────────
 
   Future<bool> updateQuizMaxMark(String token, int maxMark) async {
@@ -661,10 +814,13 @@ class AttendanceProvider extends ChangeNotifier {
         },
       );
       await LocalDb.clearSession(selectedCourse!.id, selectedCenter!.id, date);
+      await clearSavedSession();
       _setLoading(false);
       return result as Map<String, dynamic>;
     } catch (e) {
-      error = e is ApiException ? e.message : 'Could not submit attendance.';
+      error = e is ApiException
+          ? e.message
+          : 'No connection. Your attendance is safe on this phone - submit once you are online.';
       _setLoading(false);
       return null;
     }
@@ -688,4 +844,9 @@ class AttendanceProvider extends ChangeNotifier {
     unverifiedStudentIds.clear();
     notifyListeners();
   }
+}
+
+/// Offline and nothing saved on the phone yet for this list.
+class _NoCache implements Exception {
+  const _NoCache();
 }

@@ -28,6 +28,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
   bool _searched = false;
   List<RosterStudent> _results = [];
   bool _searching = false;
+  String? _searchError;
 
   @override
   void dispose() {
@@ -46,7 +47,8 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     }
 
     setState(() => _searching = true);
-    final results = await context.read<AttendanceProvider>().searchStudents(
+    final attendance = context.read<AttendanceProvider>();
+    final results = await attendance.searchStudents(
       token,
       query,
       field: _field,
@@ -54,6 +56,7 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
     if (!mounted) return;
     setState(() {
       _results = results;
+      _searchError = attendance.searchError;
       _searching = false;
       _searched = true;
     });
@@ -93,9 +96,10 @@ class _StudentSearchScreenState extends State<StudentSearchScreen> {
             child: _results.isEmpty
                 ? Center(
                     child: Text(
-                      _searched
+                      _searchError ??
+                          (_searched
                           ? 'No students found.'
-                          : 'Pick what to search by, type, then press Enter.',
+                          : 'Pick what to search by, type, then press Enter.'),
                       style: TextStyle(color: Colors.grey.shade600),
                     ),
                   )
