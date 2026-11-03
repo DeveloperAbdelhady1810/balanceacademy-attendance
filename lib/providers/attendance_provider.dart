@@ -694,6 +694,9 @@ class AttendanceProvider extends ChangeNotifier {
   /// The date of the session being worked on (today's, or an unsubmitted earlier day that was resumed).
   String _sessionDate() => _rosterDate ?? _today();
 
+  /// Date (yyyy-MM-dd) of the session being taken - used by the WhatsApp-after-submit screen.
+  String get sessionDate => _sessionDate();
+
   /// Server roster + what this phone already holds for the same session: the phone's marks and
   /// walk-ins are kept, students new on the server are added.
   List<RosterStudent> _mergeWithLocal(List<RosterStudent> fresh, List<RosterStudent>? local) {

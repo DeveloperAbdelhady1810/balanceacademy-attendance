@@ -174,6 +174,9 @@ class _RosterScreenState extends State<RosterScreen> {
     final token = _token;
     if (token == null) return;
 
+    final courseNow = attendance.selectedCourse;
+    final centerNow = attendance.selectedCenter;
+    final dateNow = attendance.sessionDate;
     setState(() => _submitting = true);
     final result = await attendance.submitAttendance(token);
     setState(() => _submitting = false);
@@ -182,7 +185,15 @@ class _RosterScreenState extends State<RosterScreen> {
     if (result != null) {
       Navigator.of(
         context,
-      ).push(MaterialPageRoute(builder: (_) => SummaryScreen(result: result)));
+      ).push(MaterialPageRoute(builder: (_) => SummaryScreen(
+          result: result,
+          token: token,
+          courseTitle: courseNow?.title ?? '',
+          courseId: courseNow?.id ?? 0,
+          centerName: centerNow?.name,
+          centerId: centerNow?.id ?? 0,
+          date: dateNow,
+        )));
     } else if (attendance.error != null) {
       _showSnack(attendance.error!, isError: true);
       // Keep the roster on screen so the assistant can fix the problem and submit again.
