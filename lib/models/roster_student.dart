@@ -12,7 +12,10 @@ class RosterStudent {
 
   /// 'present' or 'absent'.
   String status;
-  bool? homeworkDone;
+  /// Present students count as having done the homework unless the assistant unticks it.
+  bool? _homeworkDone;
+  bool? get homeworkDone => _homeworkDone ?? (status == 'present' ? true : null);
+  set homeworkDone(bool? v) => _homeworkDone = v;
   int? quizMark;
 
   /// True for a walk-in added via QR scan or manual search who wasn't in
@@ -28,10 +31,10 @@ class RosterStudent {
     this.studentNumber,
     this.parentPhone,
     this.status = 'absent',
-    this.homeworkDone,
+    bool? homeworkDone,
     this.quizMark,
     this.isWalkIn = false,
-  });
+  }) : _homeworkDone = homeworkDone;
 
   factory RosterStudent.fromJson(Map<String, dynamic> json) {
     return RosterStudent(

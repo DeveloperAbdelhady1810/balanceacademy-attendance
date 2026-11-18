@@ -66,17 +66,17 @@ class ApiClient {
     throw ApiException(response.statusCode, message);
   }
 
-  Future<dynamic> get(String path, {String? token, Map<String, String>? query}) async {
-    final response = await _client.get(_uri(path, query), headers: _headers(token)).timeout(_timeout);
+  Future<dynamic> get(String path, {String? token, Map<String, String>? query, Duration? timeout}) async {
+    final response = await _client.get(_uri(path, query), headers: _headers(token)).timeout(timeout ?? _timeout);
     return _decode(response);
   }
 
-  Future<dynamic> post(String path, {String? token, Map<String, dynamic>? body}) async {
+  Future<dynamic> post(String path, {String? token, Map<String, dynamic>? body, Duration? timeout}) async {
     final response = await _client.post(
       _uri(path),
       headers: _headers(token),
       body: body != null ? jsonEncode(body) : null,
-    ).timeout(_writeTimeout);
+    ).timeout(timeout ?? _writeTimeout);
     return _decode(response);
   }
 

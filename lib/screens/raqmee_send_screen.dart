@@ -96,8 +96,8 @@ const _personSources = <String, String>{
   'date': 'Date',
   'course': 'Course',
   'center': 'Center',
-  'status': 'Present / Absent',
-  'homework': 'Homework (Done / Not done)',
+  'status': 'Attendance (حضر / لم يحضر)',
+  'homework': 'Homework (قام بعمل الواجب / لم يقم)',
   'quiz_mark': 'Quiz mark',
 };
 
@@ -226,12 +226,14 @@ class _RaqmeeSendScreenState extends State<RaqmeeSendScreen> {
       !_selected!.needsMedia &&
       _customVars.every((v) => _src[v.n] != 'text' || _ctl[v.n]!.text.trim().isNotEmpty);
 
+  bool get _en => (_selected?.language ?? '').toLowerCase().startsWith('en');
+
   String _valueFor(String field, RaqmeeRecipient r) {
     switch (field) {
       case 'student_name':
         return r.name;
       case 'parent_name':
-        return 'ولي أمر الطالب ${r.name}';
+        return _en ? 'Parent of ${r.name}' : 'ولي أمر الطالب ${r.name}';
       case 'date':
         return widget.date;
       case 'course':
@@ -239,9 +241,11 @@ class _RaqmeeSendScreenState extends State<RaqmeeSendScreen> {
       case 'center':
         return widget.centerName ?? '-';
       case 'status':
-        return r.status == 'present' ? 'Present' : 'Absent';
+        if (_en) return r.status == 'present' ? 'Present' : 'Absent';
+        return r.status == 'present' ? 'حضر' : 'لم يحضر';
       case 'homework':
-        return r.homeworkDone == true ? 'Done' : (r.homeworkDone == false ? 'Not done' : '-');
+        if (_en) return r.homeworkDone == false ? 'Not done' : ((r.homeworkDone == true || r.status == 'present') ? 'Done' : '-');
+        return r.homeworkDone == false ? 'لم يقم بعمل الواجب' : ((r.homeworkDone == true || r.status == 'present') ? 'قام بعمل الواجب' : '-');
       case 'quiz_mark':
         return r.quizMark == null ? '-' : '${r.quizMark}';
     }
@@ -353,6 +357,7 @@ class _RaqmeeSendScreenState extends State<RaqmeeSendScreen> {
             'date': widget.date,
             'course': widget.courseTitle,
             'center': widget.centerName ?? '',
+            'lang': t.language,
           },
           variables: vars,
         );
@@ -394,6 +399,7 @@ class _RaqmeeSendScreenState extends State<RaqmeeSendScreen> {
           'date': widget.date,
           'course': widget.courseTitle,
           'center': widget.centerName ?? '',
+          'lang': t.language,
         },
         variables: [
           for (final v in _customVars)
